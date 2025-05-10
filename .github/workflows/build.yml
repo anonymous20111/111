@@ -6,7 +6,7 @@ on:
 
 env:
   ANDROID_HOME: /usr/local/android-sdk
-  PATH: $ANDROID_HOME/cmdline-tools/latest/bin:$PATH
+  PATH: $ANDROID_HOME/cmdline-tools/latest/bin:$PATH:/usr/bin:/bin
 
 jobs:
   build:
@@ -16,12 +16,32 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
-    - name: Install core utilities
+    - name: Install essential tools (with verification)
       run: |
         sudo apt-get update
-        sudo apt-get install -y \
+        # 安装基础工具并验证
+        if ! sudo apt-get install -y \
           tar gzip zip unzip \
-          xz-utils bzip2
+          xz-utils bzip2; then
+          echo "::error::Failed to install core utilities"
+          exit 1
+        fi
+        
+        # 双重验证tar是否可用
+        if ! command -v tar >/dev/null 2>&1; then
+          echo "::error::tar still not found after installation"
+          echo "Searching for tar..."
+          sudo find / -name "tar" 2>/dev/null || true
+          exit 1
+        fi
+
+    - name: Verify tool availability
+      run: |
+        echo "=== Essential tools verification ==="
+        command -v tar && tar --version
+        command -v gzip && gzip --version
+        command -v unzip && unzip -v
+        echo "PATH: $PATH"
 
     - name: Install system dependencies
       run: |
