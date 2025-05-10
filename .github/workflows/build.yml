@@ -16,32 +16,59 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
-    - name: Install essential tools (with verification)
+    - name: Configure APT sources
       run: |
-        sudo apt-get update
-        # 安装基础工具并验证
-        if ! sudo apt-get install -y \
-          tar gzip zip unzip \
-          xz-utils bzip2; then
-          echo "::error::Failed to install core utilities"
-          exit 1
-        fi
-        
-        # 双重验证tar是否可用
-        if ! command -v tar >/dev/null 2>&1; then
-          echo "::error::tar still not found after installation"
-          echo "Searching for tar..."
-          sudo find / -name "tar" 2>/dev/null || true
+        sudo sed -i 's/archive.ubuntu.com/mirrors.aliyun.com/g' /etc/apt/sources.list
+        sudo sed -i 's/security.ubuntu.com/mirrors.aliyun.com/g' /etc/apt/sources.list
+
+    - name: Install essential tools (with full verification)
+      run: |
+        # 强制更新APT缓存
+        for i in {1..5}; do
+          if sudo apt-get update; then
+            echo "APT update succeeded on attempt $i"
+            break
+          else
+            echo "APT update failed on attempt $i"
+            [ $i -eq 5 ] && exit 1
+            sleep 15
+          fi
+        done
+
+        # 安装核心工具（带重试机制）
+        CORE_TOOLS="tar gzip zip unzip xz-utils bzip2 ca-certificates"
+        for i in {1..5}; do
+          if sudo apt-get install -y --no-install-recommends $CORE_TOOLS; then
+            echo "Core tools installed successfully"
+            break
+          else
+            echo "Installation failed on attempt $i"
+            [ $i -eq 5 ] && exit 1
+            sleep 15
+          fi
+        done
+
+        # 双重验证
+        if ! command -v tar >/dev/null; then
+          echo "::error::tar still missing after installation"
+          echo "=== System diagnostics ==="
+          dpkg -l | grep tar || true
+          ls -l /usr/bin/tar /bin/tar || true
           exit 1
         fi
 
-    - name: Verify tool availability
+        echo "=== Tool versions ==="
+        tar --version
+        gzip --version
+        unzip -v
+
+    - name: Verify system environment
       run: |
-        echo "=== Essential tools verification ==="
-        command -v tar && tar --version
-        command -v gzip && gzip --version
-        command -v unzip && unzip -v
-        echo "PATH: $PATH"
+        echo "=== PATH ==="
+        echo $PATH
+        echo "=== Essential binaries ==="
+        which tar gzip unzip
+        ls -l $(which tar) $(which gzip) $(which unzip)
 
     - name: Install system dependencies
       run: |
@@ -61,7 +88,8 @@ jobs:
       run: |
         sudo mkdir -p $ANDROID_HOME
         sudo chmod -R 777 $ANDROID_HOME
-        wget -q https://dl.google.com/android/repository/commandlinetools-linux-9477386_latest.zip
+        wget -q --retry-connrefused --waitretry=1 --read-timeout=20 --timeout=15 -t 5 \
+          https://dl.google.com/android/repository/commandlinetools-linux-9477386_latest.zip
         unzip -q commandlinetools-linux-9477386_latest.zip -d $ANDROID_HOME/cmdline-tools
         mv $ANDROID_HOME/cmdline-tools/cmdline-tools $ANDROID_HOME/cmdline-tools/latest
         yes | sdkmanager --licenses > /dev/null 2>&1
